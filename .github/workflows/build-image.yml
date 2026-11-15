@@ -1,12 +1,20 @@
-name: Build LibreNMS Authentik Image
+name: Build images
+
+# Every top-level folder with a Dockerfile is an image, pushed as
+# ghcr.io/<owner>/<folder>. A push builds only the folders it changed;
+# a manual run builds the one named, or all of them.
+# An optional <folder>/VERSION file adds that version as a tag.
 
 on:
   push:
     branches:
       - main
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      image:
+        description: Folder to build (empty = all)
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -14,15 +22,55 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: librenms-authentik
 
 jobs:
-  build:
+  detect:
     runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.find.outputs.images }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find images to build
+        id: find
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          INPUT: ${{ github.event.inputs.image }}
+        run: |
+          all=$(for d in */; do d=${d%/}; [ -f "$d/Dockerfile" ] && echo "$d"; done)
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT" ]; then selected="$INPUT"; else selected="$all"; fi
+          elif [ -z "$BEFORE" ] || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            selected="$all"
+          else
+            changed=$(git diff --name-only "$BEFORE" "$GITHUB_SHA" | cut -d/ -f1 | sort -u)
+            selected=$(comm -12 <(echo "$all" | sort) <(echo "$changed"))
+          fi
+          echo "images=$(echo "$selected" | jq -Rnc '[inputs | select(length > 0)]')" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: detect
+    if: needs.detect.outputs.images != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.detect.outputs.images) }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          if [ -f "${{ matrix.image }}/VERSION" ]; then
+            echo "value=$(tr -d '[:space:]' < "${{ matrix.image }}/VERSION")" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -38,18 +86,18 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/rgorme/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=raw,value=26.6.1
+            type=raw,value=${{ steps.version.outputs.value }},enable=${{ steps.version.outputs.value != '' }}
             type=raw,value=latest
             type=sha
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./${{ env.IMAGE_NAME }}
+          context: ./${{ matrix.image }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
