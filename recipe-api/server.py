@@ -26,13 +26,17 @@ BASICS = set(read_glossary(RECIPES_DIR).get("basics") or
 
 RECIPES: dict[str, Recipe] = {r.id: r for r in load_all(RECIPES_DIR)}
 LOOKUP = load_glossary(RECIPES_DIR)
+# Per ingredient: supplier (bilka|nemlig, default nemlig), target (pantry amount the
+# monthly Bilka run fills up to) and price ({kr, per, source}) from the price job.
+INFO: dict[str, dict] = {k: v or {} for k, v in (read_glossary(RECIPES_DIR).get("ingredients") or {}).items()}
 
 server = MCPServer(
     name="recipes",
     instructions=(
         "The household's recipe collection (Danish). Ingredient names are canonical Danish names "
         "that match the pantry and freezer counters. Use match_recipes with what is in stock to plan "
-        "meals, and shopping_list to turn chosen recipes into one list."
+        "meals, and shopping_list to turn chosen recipes into one list. For what the next shop costs, "
+        "use restock_list (monthly Bilka run, from the pantry counters) and estimate_cost (Nemlig order)."
     ),
 )
 
@@ -133,6 +137,53 @@ def shopping_list(recipe_ids: list[str]) -> list[dict]:
          "recipes": sorted(used_in[name])}
         for name, units in sorted(totals.items())
     ]
+
+
+def _priced(name: str, packages: float) -> dict:
+    info = INFO.get(name, {})
+    price = info.get("price") or {}
+    kr = price.get("kr")
+    return {
+        "ingredient": name, "supplier": info.get("supplier", "nemlig"), "packages": packages,
+        "price_per_package": kr, "per": price.get("per"), "price_source": price.get("source"),
+        "subtotal": round(kr * packages, 2) if kr is not None else None,
+    }
+
+
+def _totals(lines: list[dict]) -> dict:
+    totals: dict[str, float] = defaultdict(float)
+    for line in lines:
+        if line["subtotal"] is not None:
+            totals[line["supplier"]] += line["subtotal"]
+    return {
+        "lines": lines,
+        "total_kr": {s: round(t, 2) for s, t in totals.items()},
+        "no_price": [line["ingredient"] for line in lines if line["subtotal"] is None],
+    }
+
+
+@server.tool()
+def restock_list(stock: dict[str, float]) -> dict:
+    """What the monthly Bilka run must buy and what it costs: for every pantry staple with a
+    target amount, buys target minus stock. Pass the current pantry counters as
+    {name: count}; a staple left out counts as 0. Prices are last paid prices from receipts."""
+    have = {_canonical(k): v for k, v in stock.items()}
+    lines = [
+        _priced(name, info["target"] - have.get(name, 0))
+        for name, info in sorted(INFO.items())
+        if info.get("target") and info["target"] - have.get(name, 0) > 0
+    ]
+    return _totals(lines)
+
+
+@server.tool()
+def estimate_cost(items: list[str], packages: dict[str, float] | None = None) -> dict:
+    """Estimate what a shopping list costs, per supplier (nemlig or bilka), from last paid
+    prices. Each item counts as one package unless `packages` gives {name: count}.
+    Items with no known price are listed under no_price; say so rather than guess."""
+    counts = {_canonical(k): v for k, v in (packages or {}).items()}
+    lines = [_priced(n, counts.get(n, 1)) for n in dict.fromkeys(_canonical(i) for i in items)]
+    return _totals(lines)
 
 
 async def healthz(_request):
