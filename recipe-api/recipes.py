@@ -198,7 +198,11 @@ def main(argv: list[str]) -> int:
     for name, n in missing.most_common():
         where = [r.name for r in recipes if any(i.name == name for i in r.ingredients)]
         print(f"  {name!r} ({n}x): {', '.join(where[:3])}")
-    return 1 if missing else 0
+    known = set((read_glossary(folder).get("ingredients") or {}))
+    bad_basics = [b for b in read_glossary(folder).get("basics") or [] if b not in known]
+    for b in bad_basics:
+        print(f"  basics: {b!r} is not a canonical ingredient")
+    return 1 if missing or bad_basics else 0
 
 
 if __name__ == "__main__":

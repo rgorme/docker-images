@@ -16,11 +16,13 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
-from recipes import Recipe, load_all, load_glossary
+from recipes import Recipe, load_all, load_glossary, read_glossary
 
 RECIPES_DIR = Path(os.environ.get("RECIPES_DIR", "/recipes"))
-# Cupboard basics that never decide whether a recipe can be made.
-BASICS = {"Salt", "Peber", "Salt og peber", "Vand", "Olivenolie", "Neutral olie", "Smør", "Sukker"}
+# Cupboard basics (spices, stock, oil, salt) that never decide whether a recipe
+# can be made. Listed under `basics` in ingredients.yaml; this is the fallback.
+BASICS = set(read_glossary(RECIPES_DIR).get("basics") or
+             {"Salt", "Peber", "Salt og peber", "Olivenolie", "Neutral olie", "Smør", "Sukker"})
 
 RECIPES: dict[str, Recipe] = {r.id: r for r in load_all(RECIPES_DIR)}
 LOOKUP = load_glossary(RECIPES_DIR)
@@ -75,9 +77,10 @@ def search_recipes(
 
 
 @server.tool()
-def match_recipes(have: list[str], max_missing: int = 5, limit: int = 10) -> list[dict]:
+def match_recipes(have: list[str], max_missing: int = 10, limit: int = 10) -> list[dict]:
     """Rank recipes by how many of the ingredients in `have` (e.g. pantry and freezer contents)
-    they use, then by fewest missing. Salt, pepper, oil, butter, sugar and water count as always in stock."""
+    they use, then by fewest missing. Cupboard basics (spices, stock, oil, salt and pepper)
+    count as always in stock and are left out of both lists."""
     stock = {_canonical(h) for h in have} | BASICS
     out = []
     for r in RECIPES.values():
