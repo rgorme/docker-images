@@ -5,6 +5,7 @@ RECIPES_DIR at startup. Serves MCP over streamable HTTP on /mcp and a health
 check on /healthz.
 """
 
+import logging
 import os
 from collections import defaultdict
 from pathlib import Path
@@ -142,6 +143,17 @@ app = server.streamable_http_app(
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 app.router.routes.append(Route("/healthz", healthz))
+
+class QuietHealthz(logging.Filter):
+    """Drop access-log lines for successful health checks; failures still log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access args: (client, method, path, http_version, status_code)
+        args = record.args if isinstance(record.args, tuple) else ()
+        return not (len(args) == 5 and args[2] == "/healthz" and args[4] < 400)
+
+
+logging.getLogger("uvicorn.access").addFilter(QuietHealthz())
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8000")))
