@@ -26,8 +26,8 @@ BASICS = set(read_glossary(RECIPES_DIR).get("basics") or
 
 RECIPES: dict[str, Recipe] = {r.id: r for r in load_all(RECIPES_DIR)}
 LOOKUP = load_glossary(RECIPES_DIR)
-# Per ingredient: supplier (bilka|nemlig, default nemlig), target (pantry amount the
-# monthly Bilka run fills up to) and price ({kr, per, source}) from the price job.
+# Per ingredient: supplier (bilka|nemlig, default nemlig) and price ({kr, per, source})
+# from the price job. Pantry targets live in Home Assistant (the counters' `maal`).
 INFO: dict[str, dict] = {k: v or {} for k, v in (read_glossary(RECIPES_DIR).get("ingredients") or {}).items()}
 
 server = MCPServer(
@@ -36,7 +36,8 @@ server = MCPServer(
         "The household's recipe collection (Danish). Ingredient names are canonical Danish names "
         "that match the pantry and freezer counters. Use match_recipes with what is in stock to plan "
         "meals, and shopping_list to turn chosen recipes into one list. For what the next shop costs, "
-        "use restock_list (monthly Bilka run, from the pantry counters) and estimate_cost (Nemlig order)."
+        "use estimate_cost: for the monthly Bilka run with the gaps from Home Assistant's "
+        "inventar_mangler script as packages, for the Nemlig order with the shopping list."
     ),
 )
 
@@ -163,24 +164,12 @@ def _totals(lines: list[dict]) -> dict:
 
 
 @server.tool()
-def restock_list(stock: dict[str, float]) -> dict:
-    """What the monthly Bilka run must buy and what it costs: for every pantry staple with a
-    target amount, buys target minus stock. Pass the current pantry counters as
-    {name: count}; a staple left out counts as 0. Prices are last paid prices from receipts."""
-    have = {_canonical(k): v for k, v in stock.items()}
-    lines = [
-        _priced(name, info["target"] - have.get(name, 0))
-        for name, info in sorted(INFO.items())
-        if info.get("target") and info["target"] - have.get(name, 0) > 0
-    ]
-    return _totals(lines)
-
-
-@server.tool()
 def estimate_cost(items: list[str], packages: dict[str, float] | None = None) -> dict:
     """Estimate what a shopping list costs, per supplier (nemlig or bilka), from last paid
-    prices. Each item counts as one package unless `packages` gives {name: count}.
-    Items with no known price are listed under no_price; say so rather than guess."""
+    prices. Each item counts as one package unless `packages` gives {name: count}: for the
+    monthly Bilka run, pass the pantry gaps from Home Assistant's inventar_mangler script
+    (vare -> mangler). Items with no known price are listed under no_price; say so rather
+    than guess."""
     counts = {_canonical(k): v for k, v in (packages or {}).items()}
     lines = [_priced(n, counts.get(n, 1)) for n in dict.fromkeys(_canonical(i) for i in items)]
     return _totals(lines)
