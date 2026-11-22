@@ -1,4 +1,4 @@
-FROM librenms/librenms:26.6.1
+FROM librenms/librenms:26.11.0
 
 WORKDIR /opt/librenms
 
