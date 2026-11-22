@@ -2,5 +2,32 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "packageRules": [
+    {
+      "description": "recipe-api: patch-bump VERSION in the same PR, so a new image tag is published",
+      "matchFileNames": ["recipe-api/**"],
+      "bumpVersions": [
+        {
+          "name": "recipe-api VERSION",
+          "filePatterns": ["{{packageFileDir}}/VERSION"],
+          "matchStrings": ["^(?<version>\\S+)"],
+          "bumpType": "patch"
+        }
+      ]
+    },
+    {
+      "description": "librenms-authentik: VERSION follows the upstream LibreNMS release",
+      "matchFileNames": ["librenms-authentik/**"],
+      "matchDepNames": ["librenms/librenms"],
+      "bumpVersions": [
+        {
+          "name": "librenms-authentik VERSION",
+          "filePatterns": ["{{packageFileDir}}/VERSION"],
+          "matchStrings": ["^(?<version>\\S+)"],
+          "bumpType": "sync"
+        }
+      ]
+    }
   ]
 }
